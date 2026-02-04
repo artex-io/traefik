@@ -3,7 +3,6 @@ package metrics
 import (
 	"context"
 	"errors"
-	"strings"
 	"time"
 
 	"github.com/go-kit/kit/metrics/influx"
@@ -90,7 +89,7 @@ func RegisterInfluxDB2(ctx context.Context, config *otypes.InfluxDB2) Registry {
 		registry.epEnabled = config.AddEntryPointsLabels
 		registry.entryPointReqsCounter = NewCounterWithNoopHeaders(influxDB2Store.NewCounter(influxDBEntryPointReqsName))
 		registry.entryPointReqsTLSCounter = influxDB2Store.NewCounter(influxDBEntryPointReqsTLSName)
-		registry.entryPointReqDurationHistogram, _ = NewHistogramWithScale(influxDB2Store.NewHistogram(influxDBEntryPointReqDurationName), time.Second)
+		registry.entryPointReqDurationHistogram, _ = NewScalableHistogramWithNoopHeaders(influxDB2Store.NewHistogram(influxDBEntryPointReqDurationName), time.Second)
 		registry.entryPointReqsBytesCounter = influxDB2Store.NewCounter(influxDBEntryPointReqsBytesName)
 		registry.entryPointRespsBytesCounter = influxDB2Store.NewCounter(influxDBEntryPointRespsBytesName)
 	}
@@ -99,7 +98,7 @@ func RegisterInfluxDB2(ctx context.Context, config *otypes.InfluxDB2) Registry {
 		registry.routerEnabled = config.AddRoutersLabels
 		registry.routerReqsCounter = NewCounterWithNoopHeaders(influxDB2Store.NewCounter(influxDBRouterReqsName))
 		registry.routerReqsTLSCounter = influxDB2Store.NewCounter(influxDBRouterReqsTLSName)
-		registry.routerReqDurationHistogram, _ = NewHistogramWithScale(influxDB2Store.NewHistogram(influxDBRouterReqsDurationName), time.Second)
+		registry.routerReqDurationHistogram, _ = NewScalableHistogramWithNoopHeaders(influxDB2Store.NewHistogram(influxDBRouterReqsDurationName), time.Second)
 		registry.routerReqsBytesCounter = influxDB2Store.NewCounter(influxDBRouterReqsBytesName)
 		registry.routerRespsBytesCounter = influxDB2Store.NewCounter(influxDBRouterRespsBytesName)
 	}
@@ -108,7 +107,7 @@ func RegisterInfluxDB2(ctx context.Context, config *otypes.InfluxDB2) Registry {
 		registry.svcEnabled = config.AddServicesLabels
 		registry.serviceReqsCounter = NewCounterWithNoopHeaders(influxDB2Store.NewCounter(influxDBServiceReqsName))
 		registry.serviceReqsTLSCounter = influxDB2Store.NewCounter(influxDBServiceReqsTLSName)
-		registry.serviceReqDurationHistogram, _ = NewHistogramWithScale(influxDB2Store.NewHistogram(influxDBServiceReqsDurationName), time.Second)
+		registry.serviceReqDurationHistogram, _ = NewScalableHistogramWithNoopHeaders(influxDB2Store.NewHistogram(influxDBServiceReqsDurationName), time.Second)
 		registry.serviceRetriesCounter = influxDB2Store.NewCounter(influxDBServiceRetriesTotalName)
 		registry.serviceServerUpGauge = influxDB2Store.NewGauge(influxDBServiceServerUpName)
 		registry.serviceReqsBytesCounter = influxDB2Store.NewCounter(influxDBServiceReqsBytesName)
@@ -148,7 +147,7 @@ func newInfluxDB2Client(config *otypes.InfluxDB2) (influxdb2.Client, error) {
 	// See https://github.com/influxdata/influxdb-client-go/blob/v2.7.0/options.go#L128
 	influxdb2log.Log = nil
 
-	return influxdb2.NewClient(config.Address, strings.TrimSpace(string(token))), nil
+	return influxdb2.NewClient(config.Address, string(token)), nil
 }
 
 type influxDB2Writer struct {

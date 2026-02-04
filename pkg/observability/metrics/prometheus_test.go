@@ -120,7 +120,7 @@ func TestPrometheus(t *testing.T) {
 		Add(1)
 	prometheusRegistry.
 		EntryPointReqDurationHistogram().
-		With("code", strconv.Itoa(http.StatusOK), "method", http.MethodGet, "protocol", "http", "entrypoint", "http").
+		With(nil, "code", strconv.Itoa(http.StatusOK), "method", http.MethodGet, "protocol", "http", "entrypoint", "http").
 		Observe(1)
 	prometheusRegistry.
 		EntryPointRespsBytesCounter().
@@ -141,7 +141,7 @@ func TestPrometheus(t *testing.T) {
 		Add(1)
 	prometheusRegistry.
 		RouterReqDurationHistogram().
-		With("router", "demo", "service", "service1", "code", strconv.Itoa(http.StatusOK), "method", http.MethodGet, "protocol", "http").
+		With(nil, "router", "demo", "service", "service1", "code", strconv.Itoa(http.StatusOK), "method", http.MethodGet, "protocol", "http").
 		Observe(10000)
 	prometheusRegistry.
 		RouterRespsBytesCounter().
@@ -162,7 +162,7 @@ func TestPrometheus(t *testing.T) {
 		Add(1)
 	prometheusRegistry.
 		ServiceReqDurationHistogram().
-		With("service", "service1", "code", strconv.Itoa(http.StatusOK), "method", http.MethodGet, "protocol", "http").
+		With(nil, "service", "service1", "code", strconv.Itoa(http.StatusOK), "method", http.MethodGet, "protocol", "http").
 		Observe(10000)
 	prometheusRegistry.
 		ServiceRetriesCounter().
@@ -413,13 +413,13 @@ func TestPrometheusMetricRemoval(t *testing.T) {
 				th.WithRouter("foo@providerName", th.WithServiceName("bar")),
 				th.WithRouter("router2", th.WithServiceName("bar@providerName")),
 			),
-			th.WithServices(
-				th.WithService("bar@providerName", th.WithServiceServersLoadBalancer(th.WithServers(
+			th.WithLoadBalancerServices(
+				th.WithService("bar@providerName", th.WithServers(
 					th.WithServer("http://localhost:9000"),
 					th.WithServer("http://localhost:9999"),
 					th.WithServer("http://localhost:9998"),
-				))),
-				th.WithService("service1", th.WithServiceServersLoadBalancer(th.WithServers(th.WithServer("http://localhost:9000")))),
+				)),
+				th.WithService("service1", th.WithServers(th.WithServer("http://localhost:9000"))),
 			),
 		),
 	}
@@ -429,8 +429,8 @@ func TestPrometheusMetricRemoval(t *testing.T) {
 			th.WithRouters(
 				th.WithRouter("foo@providerName", th.WithServiceName("bar")),
 			),
-			th.WithServices(
-				th.WithService("bar@providerName", th.WithServiceServersLoadBalancer(th.WithServers(th.WithServer("http://localhost:9000")))),
+			th.WithLoadBalancerServices(
+				th.WithService("bar@providerName", th.WithServers(th.WithServer("http://localhost:9000"))),
 			),
 		),
 	}
@@ -500,8 +500,8 @@ func TestPrometheusMetricRemoveEndpointForRecoveredService(t *testing.T) {
 
 	conf1 := dynamic.Configuration{
 		HTTP: th.BuildConfiguration(
-			th.WithServices(
-				th.WithService("service1", th.WithServiceServersLoadBalancer(th.WithServers(th.WithServer("http://localhost:9000")))),
+			th.WithLoadBalancerServices(
+				th.WithService("service1", th.WithServers(th.WithServer("http://localhost:9000"))),
 			),
 		),
 	}
@@ -512,8 +512,8 @@ func TestPrometheusMetricRemoveEndpointForRecoveredService(t *testing.T) {
 
 	conf3 := dynamic.Configuration{
 		HTTP: th.BuildConfiguration(
-			th.WithServices(
-				th.WithService("service1", th.WithServiceServersLoadBalancer(th.WithServers(th.WithServer("http://localhost:9001")))),
+			th.WithLoadBalancerServices(
+				th.WithService("service1", th.WithServers(th.WithServer("http://localhost:9001"))),
 			),
 		),
 	}
@@ -539,8 +539,8 @@ func TestPrometheusRemovedMetricsReset(t *testing.T) {
 
 	conf1 := dynamic.Configuration{
 		HTTP: th.BuildConfiguration(
-			th.WithServices(
-				th.WithService("service", th.WithServiceServersLoadBalancer(th.WithServers(th.WithServer("http://localhost:9000")))),
+			th.WithLoadBalancerServices(th.WithService("service",
+				th.WithServers(th.WithServer("http://localhost:9000"))),
 			),
 		),
 	}
