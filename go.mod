@@ -412,7 +412,6 @@ require (
 	sigs.k8s.io/randfill v1.0.0 // indirect
 )
 
-// Dynamic config extension.
 replace github.com/traefik/traefik/dynamic/ext => ./pkg/config/dynamic/ext
 
 // Containous forks
