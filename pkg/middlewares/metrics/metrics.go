@@ -37,7 +37,7 @@ type metricsMiddleware struct {
 	next                 http.Handler
 	reqsCounter          metrics.CounterWithHeaders
 	reqsTLSCounter       gokitmetrics.Counter
-	reqDurationHistogram metrics.ScalableHistogram
+	reqDurationHistogram metrics.ScalableHistogramWithHeaders
 	reqsBytesCounter     gokitmetrics.Counter
 	respsBytesCounter    gokitmetrics.Counter
 	baseLabels           []string
@@ -179,7 +179,7 @@ func (m *metricsMiddleware) ServeHTTP(rw http.ResponseWriter, req *http.Request)
 	}
 
 	labels = append(labels, "code", strconv.Itoa(code))
-	m.reqDurationHistogram.With(labels...).ObserveFromStart(start)
+	m.reqDurationHistogram.With(req.Header, labels...).ObserveFromStart(start)
 	m.reqsCounter.With(req.Header, labels...).Add(1)
 	m.respsBytesCounter.With(labels...).Add(float64(capt.ResponseSize()))
 	m.reqsBytesCounter.With(labels...).Add(float64(capt.RequestSize()))
