@@ -64,7 +64,7 @@ build-multi-arch-image:
 		-f buildx.Dockerfile .
 
 push-multi-arch-image:
-	docker buildx build $(DOCKER_BUILD_LABELS) -t $(TRAEFIK_IMAGE) \
+	docker buildx build $(DOCKER_BUILD_LABELS) -t $(TRAEFIK_IMAGE):$(TAG_NAME) \
 		--cache-to=type=local,dest=$(DOCKER_BUILD_CACHE) \
 		--cache-from=type=local,src=$(DOCKER_BUILD_CACHE) \
 		--platform=$(DOCKER_BUILD_PLATFORMS) \
