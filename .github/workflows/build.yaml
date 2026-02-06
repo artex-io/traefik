@@ -6,6 +6,7 @@ on:
       - master-artex
       - master
       - v*
+      - test*
     paths-ignore:
       - 'docs/**'
       - '**.md'
