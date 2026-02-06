@@ -411,6 +411,8 @@ require (
 	sigs.k8s.io/randfill v1.0.0 // indirect
 )
 
+replace github.com/traefik/traefik/dynamic/ext => ./pkg/config/dynamic/ext
+
 // Containous forks
 replace (
 	github.com/abbot/go-http-auth => github.com/containous/go-http-auth v0.4.1-0.20200324110947-a37a7636d23e

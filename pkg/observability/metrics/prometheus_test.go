@@ -120,7 +120,7 @@ func TestPrometheus(t *testing.T) {
 		Add(1)
 	prometheusRegistry.
 		EntryPointReqDurationHistogram().
-		With("code", strconv.Itoa(http.StatusOK), "method", http.MethodGet, "protocol", "http", "entrypoint", "http").
+		With(nil, "code", strconv.Itoa(http.StatusOK), "method", http.MethodGet, "protocol", "http", "entrypoint", "http").
 		Observe(1)
 	prometheusRegistry.
 		EntryPointRespsBytesCounter().
@@ -141,7 +141,7 @@ func TestPrometheus(t *testing.T) {
 		Add(1)
 	prometheusRegistry.
 		RouterReqDurationHistogram().
-		With("router", "demo", "service", "service1", "code", strconv.Itoa(http.StatusOK), "method", http.MethodGet, "protocol", "http").
+		With(nil, "router", "demo", "service", "service1", "code", strconv.Itoa(http.StatusOK), "method", http.MethodGet, "protocol", "http").
 		Observe(10000)
 	prometheusRegistry.
 		RouterRespsBytesCounter().
@@ -162,7 +162,7 @@ func TestPrometheus(t *testing.T) {
 		Add(1)
 	prometheusRegistry.
 		ServiceReqDurationHistogram().
-		With("service", "service1", "code", strconv.Itoa(http.StatusOK), "method", http.MethodGet, "protocol", "http").
+		With(nil, "service", "service1", "code", strconv.Itoa(http.StatusOK), "method", http.MethodGet, "protocol", "http").
 		Observe(10000)
 	prometheusRegistry.
 		ServiceRetriesCounter().

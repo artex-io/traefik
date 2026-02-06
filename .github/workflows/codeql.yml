@@ -3,10 +3,9 @@ name: "CodeQL"
 on:
   push:
     branches:
+      - master-artex
       - master
       - v*
-  schedule:
-    - cron: '11 22 * * 1'
 
 jobs:
   analyze:
