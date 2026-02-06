@@ -21,7 +21,6 @@ FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS gobuild
 WORKDIR /go/src/github.com/traefik/traefik
 
 COPY go.mod .
-COPY pkg/config/dynamic/ext/go.mod /go/src/github.com/traefik/traefik/pkg/config/dynamic/ext/go.mod
 COPY go.sum .
 
 RUN go mod download
