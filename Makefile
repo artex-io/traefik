@@ -12,7 +12,7 @@ CODENAME ?= cheddar
 
 INTEGRATION_OPTS := $(if $(MAKE_DOCKER_HOST),-e "DOCKER_HOST=$(MAKE_DOCKER_HOST)",-v "/var/run/docker.sock:/var/run/docker.sock")
 DOCKER_BUILD_ARGS := $(if $(DOCKER_VERSION), "--build-arg=DOCKER_VERSION=$(DOCKER_VERSION)",)
-DOCKER_BUILD_PLATFORMS ?= "linux/arm64"
+DOCKER_BUILD_PLATFORMS ?= "linux/arm64,linux/amd64"
 DOCKER_BUILD_CACHE     ?= /tmp/.buildx-cache
 DATE := $(shell date -u '+%Y-%m-%d_%I:%M:%S%p')
 
