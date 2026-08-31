@@ -1,23 +1,39 @@
 SRCS = $(shell git ls-files '*.go' | grep -v '^vendor/')
 
-TAG_NAME := $(shell git describe --abbrev=0 --tags --exact-match)
+GO ?= go
+TAG_NAME := $(shell git describe --always --tags --dirty --broken 2>/dev/null || echo dev)
 SHA := $(shell git rev-parse HEAD)
 VERSION_GIT := $(if $(TAG_NAME),$(TAG_NAME),$(SHA))
 VERSION := $(if $(VERSION),$(VERSION),$(VERSION_GIT))
 
 BIN_NAME := traefik
+TRAEFIK_IMAGE := $(if $(REPONAME),$(REPONAME),"ghcr.io/artex-io/traefik")
 CODENAME ?= cheddar
 
+INTEGRATION_OPTS := $(if $(MAKE_DOCKER_HOST),-e "DOCKER_HOST=$(MAKE_DOCKER_HOST)",-v "/var/run/docker.sock:/var/run/docker.sock")
+DOCKER_BUILD_ARGS := $(if $(DOCKER_VERSION), "--build-arg=DOCKER_VERSION=$(DOCKER_VERSION)",)
+DOCKER_BUILD_PLATFORMS ?= "linux/arm64"
+DOCKER_BUILD_CACHE     ?= /tmp/.buildx-cache
 DATE := $(shell date -u '+%Y-%m-%d_%I:%M:%S%p')
 
 # Default build target
-GOOS := $(shell go env GOOS)
-GOARCH := $(shell go env GOARCH)
+GOOS := $(shell $(GO) env GOOS)
+GOARCH := $(shell $(GO) env GOARCH)
 GOGC ?=
 
 LINT_EXECUTABLES = misspell shellcheck
 
-DOCKER_BUILD_PLATFORMS ?= linux/amd64,linux/arm64
+DOCKER_BUILD_LABELS  = --label org.opencontainers.image.title=Traefik
+DOCKER_BUILD_LABELS += --label org.opencontainers.image.description="A modern reverse-proxy"
+DOCKER_BUILD_LABELS += --label org.opencontainers.image.url="https://github.com/artex-io/traefik"
+DOCKER_BUILD_LABELS += --label org.opencontainers.image.source="https://github.com/artex-io/traefik"
+DOCKER_BUILD_LABELS += --label org.opencontainers.image.revision=$(SHA)
+DOCKER_BUILD_LABELS += --label org.opencontainers.image.version=$(TAG_NAME)
+DOCKER_BUILD_LABELS += --label org.opencontainers.image.created=$(shell date -u +'%Y-%m-%dT%H:%M:%SZ')
+
+PRE_TARGET ?= build-dev-image
+
+IN_DOCKER ?= true
 
 .PHONY: default
 #? default: Run `make generate` and `make binary`
@@ -39,6 +55,23 @@ clean-webui:
 	mkdir -p webui/static
 	printf 'For more information see `webui/readme.md`' > webui/static/DONT-EDIT-FILES-IN-THIS-DIRECTORY.md
 
+## Build Multi archs Docker image
+build-multi-arch-image:
+	docker buildx build $(DOCKER_BUILD_LABELS) -t $(TRAEFIK_IMAGE) \
+		--cache-to=type=local,dest=$(DOCKER_BUILD_CACHE) \
+		--cache-from=type=local,src=$(DOCKER_BUILD_CACHE) \
+		--platform=$(DOCKER_BUILD_PLATFORMS) \
+		-f buildx.Dockerfile .
+
+push-multi-arch-image:
+	docker buildx build $(DOCKER_BUILD_LABELS) -t $(TRAEFIK_IMAGE) \
+		--cache-to=type=local,dest=$(DOCKER_BUILD_CACHE) \
+		--cache-from=type=local,src=$(DOCKER_BUILD_CACHE) \
+		--platform=$(DOCKER_BUILD_PLATFORMS) \
+		-f buildx.Dockerfile . \
+		--push
+
+## Generate WebUI
 webui/static/index.html:
 	$(MAKE) build-webui-image
 	docker run --rm -v "$(PWD)/webui/static":'/src/webui/static' traefik-webui yarn build:prod
@@ -52,17 +85,17 @@ generate-webui: webui/static/index.html
 .PHONY: generate
 #? generate: Generate code (Dynamic and Static configuration documentation reference files)
 generate:
-	go generate
+	$(GO) generate
 
 .PHONY: binary
 #? binary: Build the binary
 binary: generate-webui dist
 	@echo SHA: $(VERSION) $(CODENAME) $(DATE)
-	CGO_ENABLED=0 GOGC=${GOGC} GOOS=${GOOS} GOARCH=${GOARCH} go build ${FLAGS[*]} -ldflags "-s -w \
+	CGO_ENABLED=0 GOGC=$(GOGC) GOOS=$(GOOS) GOARCH=$(GOARCH) GOARM=$(patsubst v%,%,$(GOARM)) GOARM64=$(GOARM64) GOAMD64=$(GOAMD64) $(GO) build ${FLAGS[*]} -ldflags "-s -w \
     -X github.com/traefik/traefik/v3/pkg/version.Version=$(VERSION) \
     -X github.com/traefik/traefik/v3/pkg/version.Codename=$(CODENAME) \
     -X github.com/traefik/traefik/v3/pkg/version.BuildDate=$(DATE)" \
-    -installsuffix nocgo -o "./dist/${GOOS}/${GOARCH}/$(BIN_NAME)" ./cmd/traefik
+    -installsuffix nocgo -o "./dist/$(GOOS)/$(GOARCH)/$(GOARM)$(GOARM64)$(GOAMD64)/$(BIN_NAME)" ./cmd/traefik
 
 binary-linux-arm64: export GOOS := linux
 binary-linux-arm64: export GOARCH := arm64
@@ -72,7 +105,7 @@ binary-linux-arm64:
 binary-linux-amd64: export GOOS := linux
 binary-linux-amd64: export GOARCH := amd64
 binary-linux-amd64:
-	@$(MAKE) binary
+	@$(MAKE) binary GOVARIANT=v1
 
 binary-windows-amd64: export GOOS := windows
 binary-windows-amd64: export GOARCH := amd64
@@ -92,18 +125,18 @@ test: test-ui-unit test-unit test-integration
 .PHONY: test-unit
 #? test-unit: Run the unit tests
 test-unit:
-	GOOS=$(GOOS) GOARCH=$(GOARCH) go test -cover "-coverprofile=cover.out" -v $(TESTFLAGS) ./pkg/... ./cmd/...
+	GOOS=$(GOOS) GOARCH=$(GOARCH) $(GO) test -cover "-coverprofile=cover.out" -v $(TESTFLAGS) ./pkg/... ./cmd/...
 
 .PHONY: test-integration
 #? test-integration: Run the integration tests
 test-integration:
-	GOOS=$(GOOS) GOARCH=$(GOARCH) go test ./integration -test.timeout=20m -failfast -v $(TESTFLAGS)
+	GOOS=$(GOOS) GOARCH=$(GOARCH) $(GO) test ./integration -test.timeout=20m -failfast -v $(TESTFLAGS)
 
 .PHONY: test-gateway-api-conformance
 #? test-gateway-api-conformance: Run the Gateway API conformance tests
 test-gateway-api-conformance: build-image-dirty
 	# In case of a new Minor/Major version, the traefikVersion needs to be updated.
-	GOOS=$(GOOS) GOARCH=$(GOARCH) go test ./integration -v -tags gatewayAPIConformance -test.run GatewayAPIConformanceSuite -traefikVersion="v3.7" $(TESTFLAGS)
+	GOOS=$(GOOS) GOARCH=$(GOARCH) go test ./integration -v -tags gatewayAPIConformance -test.run GatewayAPIConformanceSuite -traefikVersion="v3.6" $(TESTFLAGS)
 
 .PHONY: test-knative-conformance
 #? test-knative-conformance: Run the Knative conformance tests
