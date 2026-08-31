@@ -56,7 +56,7 @@ jobs:
     # webui/ and docs/ hold build-time tooling that never ships in the image.
     - name: Trivy scan (Go dependencies)
       run: |
-        docker run --rm -v "$PWD":/repo aquasec/trivy:latest fs \
+        docker run --rm -v "$PWD":/repo aquasec/trivy:0.74.0@sha256:62b1e65e8869bc4b4c6aa4fa2b21595256c7c2f6018a9d9ad61caf87187c1969 fs \
           --scanners vuln --severity CRITICAL,HIGH --ignore-unfixed \
           --skip-dirs /repo/webui --skip-dirs /repo/docs \
           --exit-code 1 /repo
@@ -113,7 +113,7 @@ jobs:
     - name: Trivy scan of the built image
       run: |
         docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
-          -v "$PWD/.trivy":/policy aquasec/trivy:latest image \
+          -v "$PWD/.trivy":/policy aquasec/trivy:0.74.0@sha256:62b1e65e8869bc4b4c6aa4fa2b21595256c7c2f6018a9d9ad61caf87187c1969 image \
           --severity CRITICAL,HIGH --ignore-unfixed \
           --ignore-policy /policy/ignore-policy.rego \
           --exit-code 1 ghcr.io/artex-io/traefik:latest
