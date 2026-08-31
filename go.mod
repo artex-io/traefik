@@ -418,7 +418,6 @@ require (
 	software.sslmate.com/src/go-pkcs12 v0.7.3 // indirect
 )
 
-// Dynamic config extension.
 replace github.com/traefik/traefik/dynamic/ext => ./pkg/config/dynamic/ext
 
 // Containous forks

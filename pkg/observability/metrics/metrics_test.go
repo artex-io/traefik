@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestScalableHistogram(t *testing.T) {
+func TestScalableHistogramWithHeaders(t *testing.T) {
 	h := generic.NewHistogram("test", 1)
 	sh, err := NewHistogramWithScale(h, time.Millisecond)
 	require.NoError(t, err)
@@ -39,7 +39,7 @@ func TestNewMultiRegistry(t *testing.T) {
 	registry := NewMultiRegistry(registries)
 
 	registry.ServiceReqsCounter().With(nil, "key", "requests").Add(1)
-	registry.ServiceReqDurationHistogram().With("key", "durations").Observe(float64(2))
+	registry.ServiceReqDurationHistogram().With(nil, "key", "durations").Observe(float64(2))
 	registry.ServiceRetriesCounter().With("key", "retries").Add(3)
 
 	for _, collectingRegistry := range registries {
@@ -107,7 +107,7 @@ type histogramMock struct {
 	lastLabelValues    []string
 }
 
-func (c *histogramMock) With(labelValues ...string) ScalableHistogram {
+func (c *histogramMock) With(headers http.Header, labelValues ...string) ScalableHistogramWithHeaders {
 	c.lastLabelValues = labelValues
 	return c
 }
