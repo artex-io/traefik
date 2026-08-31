@@ -57,14 +57,14 @@ clean-webui:
 
 ## Build Multi archs Docker image
 build-multi-arch-image:
-	docker buildx build $(DOCKER_BUILD_LABELS) -t $(TRAEFIK_IMAGE) \
+	docker buildx build $(DOCKER_BUILD_LABELS) $(DOCKER_BUILDX_ARGS) -t $(TRAEFIK_IMAGE) \
 		--cache-to=type=local,dest=$(DOCKER_BUILD_CACHE) \
 		--cache-from=type=local,src=$(DOCKER_BUILD_CACHE) \
 		--platform=$(DOCKER_BUILD_PLATFORMS) \
 		-f buildx.Dockerfile .
 
 push-multi-arch-image:
-	docker buildx build $(DOCKER_BUILD_LABELS) -t $(TRAEFIK_IMAGE) \
+	docker buildx build $(DOCKER_BUILD_LABELS) -t $(TRAEFIK_IMAGE) -t $(TRAEFIK_IMAGE):$(VERSION) \
 		--cache-to=type=local,dest=$(DOCKER_BUILD_CACHE) \
 		--cache-from=type=local,src=$(DOCKER_BUILD_CACHE) \
 		--platform=$(DOCKER_BUILD_PLATFORMS) \
