@@ -68,7 +68,7 @@ func RegisterStatsd(ctx context.Context, config *otypes.Statsd) Registry {
 		registry.epEnabled = config.AddEntryPointsLabels
 		registry.entryPointReqsCounter = NewCounterWithNoopHeaders(statsdClient.NewCounter(statsdEntryPointReqsName, 1.0))
 		registry.entryPointReqsTLSCounter = statsdClient.NewCounter(statsdEntryPointReqsTLSName, 1.0)
-		registry.entryPointReqDurationHistogram, _ = NewHistogramWithScale(statsdClient.NewTiming(statsdEntryPointReqDurationName, 1.0), time.Millisecond)
+		registry.entryPointReqDurationHistogram, _ = NewScalableHistogramWithNoopHeaders(statsdClient.NewTiming(statsdEntryPointReqDurationName, 1.0), time.Millisecond)
 		registry.entryPointReqsBytesCounter = statsdClient.NewCounter(statsdEntryPointReqsBytesName, 1.0)
 		registry.entryPointRespsBytesCounter = statsdClient.NewCounter(statsdEntryPointRespsBytesName, 1.0)
 	}
@@ -77,7 +77,7 @@ func RegisterStatsd(ctx context.Context, config *otypes.Statsd) Registry {
 		registry.routerEnabled = config.AddRoutersLabels
 		registry.routerReqsCounter = NewCounterWithNoopHeaders(statsdClient.NewCounter(statsdRouterReqsName, 1.0))
 		registry.routerReqsTLSCounter = statsdClient.NewCounter(statsdRouterReqsTLSName, 1.0)
-		registry.routerReqDurationHistogram, _ = NewHistogramWithScale(statsdClient.NewTiming(statsdRouterReqsDurationName, 1.0), time.Millisecond)
+		registry.routerReqDurationHistogram, _ = NewScalableHistogramWithNoopHeaders(statsdClient.NewTiming(statsdRouterReqsDurationName, 1.0), time.Millisecond)
 		registry.routerReqsBytesCounter = statsdClient.NewCounter(statsdRouterReqsBytesName, 1.0)
 		registry.routerRespsBytesCounter = statsdClient.NewCounter(statsdRouterRespsBytesName, 1.0)
 	}
@@ -86,7 +86,7 @@ func RegisterStatsd(ctx context.Context, config *otypes.Statsd) Registry {
 		registry.svcEnabled = config.AddServicesLabels
 		registry.serviceReqsCounter = NewCounterWithNoopHeaders(statsdClient.NewCounter(statsdServiceReqsName, 1.0))
 		registry.serviceReqsTLSCounter = statsdClient.NewCounter(statsdServiceReqsTLSName, 1.0)
-		registry.serviceReqDurationHistogram, _ = NewHistogramWithScale(statsdClient.NewTiming(statsdServiceReqsDurationName, 1.0), time.Millisecond)
+		registry.serviceReqDurationHistogram, _ = NewScalableHistogramWithNoopHeaders(statsdClient.NewTiming(statsdServiceReqsDurationName, 1.0), time.Millisecond)
 		registry.serviceRetriesCounter = statsdClient.NewCounter(statsdServiceRetriesTotalName, 1.0)
 		registry.serviceServerUpGauge = statsdClient.NewGauge(statsdServiceServerUpName)
 		registry.serviceReqsBytesCounter = statsdClient.NewCounter(statsdServiceReqsBytesName, 1.0)

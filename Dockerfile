@@ -1,5 +1,5 @@
-# syntax=docker/dockerfile:1
-FROM alpine:3.24
+# syntax=docker/dockerfile:1@sha256:4edf897a3ffa55b89f906fc8cc78afdb3f1834cc9c7083565e611a8a7d5fe99e
+FROM alpine:3.24@sha256:71e9b7bae160ba167fa17414401b94cbcdaf3c32feeab9298bd794a2a0614c35
 
 RUN apk add --no-cache --no-progress ca-certificates tzdata
 
