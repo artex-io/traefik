@@ -9,8 +9,6 @@ import (
 	"net"
 	"net/http"
 	"reflect"
-	"slices"
-	"strings"
 	"sync"
 	"time"
 
@@ -20,6 +18,7 @@ import (
 	"github.com/spiffe/go-spiffe/v2/spiffetls/tlsconfig"
 	"github.com/spiffe/go-spiffe/v2/svid/x509svid"
 	"github.com/traefik/traefik/v3/pkg/config/dynamic"
+	"github.com/traefik/traefik/v3/pkg/server/service/kerberos"
 	traefiktls "github.com/traefik/traefik/v3/pkg/tls"
 	"github.com/traefik/traefik/v3/pkg/types"
 )
@@ -346,65 +345,15 @@ func (t *TransportManager) createRoundTripper(cfg *dynamic.ServersTransport, tls
 
 	// Return directly HTTP/1.1 transport when HTTP/2 is disabled
 	if cfg.DisableHTTP2 {
-		return &kerberosRoundTripper{
-			OriginalRoundTripper: transport,
-			new: func() http.RoundTripper {
-				return transport.Clone()
-			},
-		}, nil
+		return kerberos.NewRoundTripper(transport, func() http.RoundTripper {
+			return transport.Clone()
+		}), nil
 	}
 
 	rt := newSmartRoundTripper(transport)
-	return &kerberosRoundTripper{
-		OriginalRoundTripper: rt,
-		new: func() http.RoundTripper {
-			return rt.Clone()
-		},
-	}, nil
-}
-
-type stickyRoundTripper struct {
-	RoundTripper http.RoundTripper
-}
-
-type transportKeyType string
-
-var transportKey transportKeyType = "transport"
-
-func AddTransportOnContext(ctx context.Context) context.Context {
-	return context.WithValue(ctx, transportKey, &stickyRoundTripper{})
-}
-
-type kerberosRoundTripper struct {
-	new                  func() http.RoundTripper
-	OriginalRoundTripper http.RoundTripper
-}
-
-func (k *kerberosRoundTripper) RoundTrip(request *http.Request) (*http.Response, error) {
-	value, ok := request.Context().Value(transportKey).(*stickyRoundTripper)
-	if !ok {
-		return k.OriginalRoundTripper.RoundTrip(request)
-	}
-
-	if value.RoundTripper != nil {
-		return value.RoundTripper.RoundTrip(request)
-	}
-
-	resp, err := k.OriginalRoundTripper.RoundTrip(request)
-
-	// If we found that we are authenticating with Kerberos (Negotiate) or NTLM.
-	// We put a dedicated roundTripper in the ConnContext.
-	// This will stick the next calls to the same connection with the backend.
-	if err == nil && containsNTLMorNegotiate(resp.Header.Values("WWW-Authenticate")) {
-		value.RoundTripper = k.new()
-	}
-	return resp, err
-}
-
-func containsNTLMorNegotiate(h []string) bool {
-	return slices.ContainsFunc(h, func(s string) bool {
-		return strings.HasPrefix(s, "NTLM") || strings.HasPrefix(s, "Negotiate")
-	})
+	return kerberos.NewRoundTripper(rt, func() http.RoundTripper {
+		return rt.Clone()
+	}), nil
 }
 
 func createRootCACertPool(rootCAs []types.FileOrContent) *x509.CertPool {

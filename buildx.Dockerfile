@@ -1,6 +1,6 @@
 # -- WEBUI ---------------------------------------------------------------------
 
-FROM --platform=$BUILDPLATFORM node:24.7-alpine3.22@sha256:be4d5e92ac68483ec71440bf5934865b4b7fcb93588f17a24d411d15f0204e4f AS webui
+FROM --platform=$BUILDPLATFORM node:24.22.1-alpine3.24@sha256:06d7adf3e0ef61a13f1d28682726366f97a15aa1888c934d3ecec86c33918b53 AS webui
 
 RUN npm upgrade --global yarn
 
@@ -16,7 +16,7 @@ RUN yarn build
 
 # -- GO BUILD ------------------------------------------------------------------
 
-FROM --platform=$BUILDPLATFORM golang:1.26-alpine@sha256:28d89ee9cc0ff9fec75c82ca201e6bf7fdf9a679d4b7b24dfa04f2bb766bb468 AS gobuild
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine@sha256:d530cf60723abf1ffae0cd16bb546b379ec0550d2f3815e5b16ed69dbc00fba4 AS gobuild
 
 WORKDIR /go/src/github.com/traefik/traefik
 

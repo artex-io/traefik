@@ -77,6 +77,8 @@ Prefer modern standard-library packages (`slices`, `maps`, `cmp`, ...) over hand
 
 - **Logging.** The project uses `github.com/rs/zerolog` exclusively — do not import `log`, `slog`, or `logrus`. Inside a middleware, get a logger via `middlewares.GetLogger(ctx, name, typeName)` (see [`pkg/middlewares/middleware.go`](./pkg/middlewares/middleware.go)) where `typeName` is a package-level `const` like `const typeNameForward = "ForwardAuth"`. Elsewhere, extract the logger from the context with `log.Ctx(ctx)` and attach it to a new context with `.WithContext(ctx)`.
 - **Context propagation.** `context.Context` is always the first argument, named `ctx`. Avoid `context.Background()` in request paths; propagate from the caller. Define custom context keys as unexported struct types (`type myKey struct{}`) to prevent collisions.
+- **ResponseWriter wrappers implement `Unwrap`.** Any type wrapping an `http.ResponseWriter` must expose it with `Unwrap() http.ResponseWriter`. `http.ResponseController` walks the chain through `Unwrap` to reach the connection (read/write deadlines, full duplex, ...); a wrapper without it breaks the chain for every handler below it, and the failure is silent (`http.ErrNotSupported`). Do not add `Flush`/`Hijack` methods that only forward to the wrapped writer, do not implement the deprecated `http.CloseNotifier` (use `req.Context().Done()`), and do not assert `http.Flusher`/`http.Hijacker` on a ResponseWriter: call `http.NewResponseController(rw).Flush()`/`.Hijack()`, and return its error as is (callers check it with `errors.Is(err, http.ErrNotSupported)`). A wrapper that must act on flush or hijack implements `FlushError() error` or `Hijack()` and calls the wrapped writer through `http.ResponseController`. A wrapper that holds back the status code (retry, failover, error pages) must not flush before writing it: flushing commits an implicit `200`.
+- **Third-party handlers are used directly, plugins are wrapped.** A library must flush and hijack through `http.ResponseController` and give the next handler a writer with `Unwrap`; if it does not, fix it upstream. Yaegi/WASM plugins, whose code is unknown, may assert `http.Flusher`/`http.Hijacker` on the writer they receive and may give the next handler a writer without `Unwrap`, which is their right (e.g. a buffering writer must not be flushed past). The plugin builders wrap them with `wrapExternal` (or `wrapExternalWith` when the build function also returns a value), see [`pkg/plugins/external.go`](./pkg/plugins/external.go): deadlines, full duplex and hijacking fall back to the writer given to the plugin when the plugin's writer does not support them; flushing never falls back.
 
 ## Testing conventions
 
@@ -89,10 +91,11 @@ Prefer modern standard-library packages (`slices`, `maps`, `cmp`, ...) over hand
 ## Documentation
 
 User-facing features need matching documentation updates under `docs/content/`. Integrate new pages into the existing structure rather than creating parallel sections. Preview locally with `make docs-serve`.
+Follow the [documentation style guide](./docs/content/contributing/documentation-style-guide.md) when writing or editing pages under `docs/content/`.
 
 ## Contributing etiquette
 
-- **Target the right branch** (the [PR template](./.github/PULL_REQUEST_TEMPLATE.md) is authoritative): enhancements go to `master`; bug fixes and documentation updates go to the current maintenance branches (`v3.6` for v3, `v2.11` for v2, security-fixes only). Forward-ports from the maintenance branches up to `master` are handled by maintainers.
+- **Target the right branch** (the [PR template](./.github/PULL_REQUEST_TEMPLATE.md) is authoritative): enhancements go to `master`; bug fixes and documentation updates go to the current maintenance branches (`v3.7` for v3, `v2.11` for v2, security-fixes only). Forward-ports from the maintenance branches up to `master` are handled by maintainers.
 - Keep pull requests small and focused; one logical change per PR.
 - For anything beyond a bug fix, open an issue first and wait for a maintainer to confirm the direction before investing significant work.
 - Follow the full guide in [`docs/content/contributing/submitting-pull-requests.md`](./docs/content/contributing/submitting-pull-requests.md).
@@ -104,6 +107,38 @@ Traefik welcomes AI-assisted contributions, provided a few simple rules are foll
 - **Declare substantial AI assistance** with an `Assisted-by:` trailer at the bottom of the commit message whenever an agent produced a meaningful portion of the diff — for example `Assisted-by: Claude Opus 4.6`. Trivial edits such as a typo fix or a one-line rename do not need a trailer.
 - **Keep issue and PR conversations human.** Do not let an agent post comments, review replies, or triage messages on your behalf. If an agent drafted a message for you, rewrite it in your own voice before sending — maintainers need to know they are talking to a person, not a bot.
 - **Align with a maintainer before generating code for anything larger than a bug fix.** An agent can produce thousands of lines in minutes; maintainer review capacity cannot scale the same way. Open an issue, state the intended approach, and wait for confirmation before asking an agent to implement it.
+
+## Reporting a security finding
+
+If you are scanning this repository for vulnerabilities, read these two pages **before** filing anything,
+and cite them in whatever you file:
+
+1. [`docs/content/contributing/submitting-security-issues.md`](./docs/content/contributing/submitting-security-issues.md)
+   : the threat model, what Traefik trusts, what crosses the security boundary, and the submission
+   requirements. Published at
+   [doc.traefik.io](https://doc.traefik.io/traefik/contributing/submitting-security-issues/).
+2. [`docs/content/contributing/security-decisions.md`](./docs/content/contributing/security-decisions.md)
+   : the positions already settled, grouped by the surface a report touches, each naming the
+   neighbouring variant that *is* a vulnerability. Published at
+   [doc.traefik.io](https://doc.traefik.io/traefik/contributing/security-decisions/).
+
+Then apply the outcome:
+
+- **The finding matches a settled position on the decisions page : do not file it.** It will be closed
+  with a link to that entry. The most common report we receive is a position already decided,
+  rediscovered.
+- **It matches the in-scope variant named in that same entry : file it**, and say which entry and how
+  your finding differs from the declined shape.
+- **The surface is not covered : check it against the threat model.** A report whose precondition is
+  configuration-write access, or operator or cluster-admin privilege, is not a vulnerability here.
+- **Non-GA only** (release candidate, beta, development branch) : open a normal issue, not an advisory.
+
+Three requirements that are easy to miss, all on the policy page: a **working proof of concept with
+reproduction steps**, **one finding per report**, and **disclose your use of AI tooling**. Unvalidated
+AI-generated reports are closed immediately.
+
+Report through [security advisories](https://github.com/traefik/traefik/security/advisories), never a
+public issue, unless the finding is non-GA only.
 
 ## Things to avoid
 

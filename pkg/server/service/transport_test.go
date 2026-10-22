@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/require"
 	ptypes "github.com/traefik/paerser/types"
 	"github.com/traefik/traefik/v3/pkg/config/dynamic"
+	"github.com/traefik/traefik/v3/pkg/server/service/kerberos"
 	traefiktls "github.com/traefik/traefik/v3/pkg/tls"
 	"github.com/traefik/traefik/v3/pkg/types"
 )
@@ -451,7 +452,7 @@ func TestSpiffeMTLS(t *testing.T) {
 	// if no certificate is previously set on the configured TLS config.
 	// It makes the test server always serve the httptest default certificate, and not the SPIFFE certificate,
 	// as GetCertificate is in that case never called (there's a default cert, and SNI is not used).
-	// To bypass this issue, we're manually extracting the server ceritificate from the server SVID
+	// To bypass this issue, we're manually extracting the server certificate from the server SVID
 	// and use another initialization method that forces serving the server SPIFFE certificate.
 	serverCert, err := tlsconfig.GetCertificate(&serverSource)(nil)
 	require.NoError(t, err)
@@ -631,74 +632,62 @@ func TestDisableHTTP2(t *testing.T) {
 	}
 }
 
-func TestKerberosRoundTripper(t *testing.T) {
-	testCases := []struct {
-		desc string
+func TestKerberosRoundTripperDoesNotLeakAcrossServersTransports(t *testing.T) {
+	ntlmSrv := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
+		rw.Header().Set("WWW-Authenticate", "NTLM")
+		rw.WriteHeader(http.StatusUnauthorized)
+	}))
+	t.Cleanup(ntlmSrv.Close)
 
-		originalRoundTripperHeaders map[string][]string
+	// The httptest certificate is not signed by the root CA pinned below.
+	untrustedSrv := httptest.NewTLSServer(http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
+		rw.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(untrustedSrv.Close)
 
-		expectedStatusCode     []int
-		expectedDedicatedCount int
-		expectedOriginalCount  int
-	}{
-		{
-			desc:                  "without special header",
-			expectedStatusCode:    []int{http.StatusUnauthorized, http.StatusUnauthorized, http.StatusUnauthorized},
-			expectedOriginalCount: 3,
+	transportManager := NewTransportManager(nil)
+	transportManager.Update(map[string]*dynamic.ServersTransport{
+		"insecure": {InsecureSkipVerify: true},
+		"pinned": {
+			ServerName: "example.com",
+			RootCAs:    []types.FileOrContent{types.FileOrContent(localhostCert)},
 		},
-		{
-			desc:                        "with Negotiate (Kerberos)",
-			originalRoundTripperHeaders: map[string][]string{"Www-Authenticate": {"Negotiate"}},
-			expectedStatusCode:          []int{http.StatusUnauthorized, http.StatusOK, http.StatusOK},
-			expectedOriginalCount:       1,
-			expectedDedicatedCount:      2,
-		},
-		{
-			desc:                        "with NTLM",
-			originalRoundTripperHeaders: map[string][]string{"Www-Authenticate": {"NTLM"}},
-			expectedStatusCode:          []int{http.StatusUnauthorized, http.StatusOK, http.StatusOK},
-			expectedOriginalCount:       1,
-			expectedDedicatedCount:      2,
-		},
-	}
+	})
 
-	for _, test := range testCases {
-		t.Run(test.desc, func(t *testing.T) {
-			t.Parallel()
+	insecureRT, err := transportManager.GetRoundTripper("insecure")
+	require.NoError(t, err)
 
-			origCount := 0
-			dedicatedCount := 0
-			rt := kerberosRoundTripper{
-				new: func() http.RoundTripper {
-					return roundTripperFn(func(req *http.Request) (*http.Response, error) {
-						dedicatedCount++
-						return &http.Response{
-							StatusCode: http.StatusOK,
-						}, nil
-					})
-				},
-				OriginalRoundTripper: roundTripperFn(func(req *http.Request) (*http.Response, error) {
-					origCount++
-					return &http.Response{
-						StatusCode: http.StatusUnauthorized,
-						Header:     test.originalRoundTripperHeaders,
-					}, nil
-				}),
-			}
+	pinnedRT, err := transportManager.GetRoundTripper("pinned")
+	require.NoError(t, err)
 
-			ctx := AddTransportOnContext(t.Context())
-			for _, expected := range test.expectedStatusCode {
-				req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://127.0.0.1", http.NoBody)
-				require.NoError(t, err)
-				resp, err := rt.RoundTrip(req)
-				require.NoError(t, err)
-				require.Equal(t, expected, resp.StatusCode)
-			}
+	// Every request below carries this context, that is they all belong to the same client connection.
+	ctx := kerberos.AddTransportOnContext(t.Context())
 
-			require.Equal(t, test.expectedOriginalCount, origCount)
-			require.Equal(t, test.expectedDedicatedCount, dedicatedCount)
-		})
-	}
+	var certErr x509.UnknownAuthorityError
+
+	// As long as nothing is stuck on the connection, the pinned ServersTransport enforces its own root CA.
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, untrustedSrv.URL, http.NoBody)
+	require.NoError(t, err)
+
+	_, err = pinnedRT.RoundTrip(req)
+	require.ErrorAs(t, err, &certErr)
+
+	// The NTLM credential sticks a dedicated round tripper for the insecure ServersTransport on this connection.
+	req, err = http.NewRequestWithContext(ctx, http.MethodGet, ntlmSrv.URL, http.NoBody)
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "NTLM TlRMTVNTUAAB")
+
+	resp, err := insecureRT.RoundTrip(req)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+
+	// The pinned ServersTransport must not be served by the round tripper stuck for the insecure one.
+	req, err = http.NewRequestWithContext(ctx, http.MethodGet, untrustedSrv.URL, http.NoBody)
+	require.NoError(t, err)
+
+	_, err = pinnedRT.RoundTrip(req)
+	assert.ErrorAs(t, err, &certErr)
 }
 
 func TestPeerCertSANs(t *testing.T) {
@@ -778,122 +767,6 @@ func TestPeerCertSANs(t *testing.T) {
 			}
 		})
 	}
-}
-
-// fakeSpiffePKI simulates a SPIFFE aware PKI and allows generating multiple valid SVIDs.
-type fakeSpiffePKI struct {
-	caPrivateKey *rsa.PrivateKey
-
-	bundle *x509bundle.Bundle
-}
-
-func newFakeSpiffePKI(trustDomain spiffeid.TrustDomain) (fakeSpiffePKI, error) {
-	caPrivateKey, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		return fakeSpiffePKI{}, err
-	}
-
-	caTemplate := x509.Certificate{
-		SerialNumber: big.NewInt(2000),
-		Subject: pkix.Name{
-			Organization: []string{"spiffe"},
-		},
-		URIs:         []*url.URL{spiffeid.RequireFromPath(trustDomain, "/ca").URL()},
-		NotBefore:    time.Now(),
-		NotAfter:     time.Now().Add(time.Hour),
-		SubjectKeyId: []byte("ca"),
-		KeyUsage: x509.KeyUsageCertSign |
-			x509.KeyUsageCRLSign,
-		BasicConstraintsValid: true,
-		IsCA:                  true,
-		PublicKey:             caPrivateKey.Public(),
-	}
-
-	caCertDER, err := x509.CreateCertificate(
-		rand.Reader,
-		&caTemplate,
-		&caTemplate,
-		caPrivateKey.Public(),
-		caPrivateKey,
-	)
-	if err != nil {
-		return fakeSpiffePKI{}, err
-	}
-
-	bundle, err := x509bundle.ParseRaw(
-		trustDomain,
-		caCertDER,
-	)
-	if err != nil {
-		return fakeSpiffePKI{}, err
-	}
-
-	return fakeSpiffePKI{
-		bundle:       bundle,
-		caPrivateKey: caPrivateKey,
-	}, nil
-}
-
-func (f *fakeSpiffePKI) genSVID(id spiffeid.ID) (*x509svid.SVID, error) {
-	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		return nil, err
-	}
-
-	template := x509.Certificate{
-		SerialNumber: big.NewInt(200001),
-		URIs:         []*url.URL{id.URL()},
-		NotBefore:    time.Now(),
-		NotAfter:     time.Now().Add(time.Hour),
-		SubjectKeyId: []byte("svid"),
-		KeyUsage: x509.KeyUsageKeyEncipherment |
-			x509.KeyUsageKeyAgreement |
-			x509.KeyUsageDigitalSignature,
-		ExtKeyUsage: []x509.ExtKeyUsage{
-			x509.ExtKeyUsageServerAuth,
-			x509.ExtKeyUsageClientAuth,
-		},
-		BasicConstraintsValid: true,
-		PublicKey:             privateKey.PublicKey,
-	}
-
-	certDER, err := x509.CreateCertificate(
-		rand.Reader,
-		&template,
-		f.bundle.X509Authorities()[0],
-		privateKey.Public(),
-		f.caPrivateKey,
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	keyPKCS8, err := x509.MarshalPKCS8PrivateKey(privateKey)
-	if err != nil {
-		return nil, err
-	}
-
-	return x509svid.ParseRaw(certDER, keyPKCS8)
-}
-
-// fakeSpiffeSource allows retrieving statically an SVID and its associated bundle.
-type fakeSpiffeSource struct {
-	bundle *x509bundle.Bundle
-	svid   *x509svid.SVID
-}
-
-func (s *fakeSpiffeSource) GetX509BundleForTrustDomain(trustDomain spiffeid.TrustDomain) (*x509bundle.Bundle, error) {
-	return s.bundle, nil
-}
-
-func (s *fakeSpiffeSource) GetX509SVID() (*x509svid.SVID, error) {
-	return s.svid, nil
-}
-
-type roundTripperFn func(req *http.Request) (*http.Response, error)
-
-func (r roundTripperFn) RoundTrip(request *http.Request) (*http.Response, error) {
-	return r(request)
 }
 
 func TestConnectionTimeouts(t *testing.T) {
@@ -1074,4 +947,114 @@ func TestConnectionTimeoutsAreDefined(t *testing.T) {
 			assert.Equal(t, time.Duration(test.writeTimeout), wrapped.writeTimeout)
 		})
 	}
+}
+
+// fakeSpiffePKI simulates a SPIFFE aware PKI and allows generating multiple valid SVIDs.
+type fakeSpiffePKI struct {
+	caPrivateKey *rsa.PrivateKey
+
+	bundle *x509bundle.Bundle
+}
+
+func newFakeSpiffePKI(trustDomain spiffeid.TrustDomain) (fakeSpiffePKI, error) {
+	caPrivateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return fakeSpiffePKI{}, err
+	}
+
+	caTemplate := x509.Certificate{
+		SerialNumber: big.NewInt(2000),
+		Subject: pkix.Name{
+			Organization: []string{"spiffe"},
+		},
+		URIs:         []*url.URL{spiffeid.RequireFromPath(trustDomain, "/ca").URL()},
+		NotBefore:    time.Now(),
+		NotAfter:     time.Now().Add(time.Hour),
+		SubjectKeyId: []byte("ca"),
+		KeyUsage: x509.KeyUsageCertSign |
+			x509.KeyUsageCRLSign,
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+		PublicKey:             caPrivateKey.Public(),
+	}
+
+	caCertDER, err := x509.CreateCertificate(
+		rand.Reader,
+		&caTemplate,
+		&caTemplate,
+		caPrivateKey.Public(),
+		caPrivateKey,
+	)
+	if err != nil {
+		return fakeSpiffePKI{}, err
+	}
+
+	bundle, err := x509bundle.ParseRaw(
+		trustDomain,
+		caCertDER,
+	)
+	if err != nil {
+		return fakeSpiffePKI{}, err
+	}
+
+	return fakeSpiffePKI{
+		bundle:       bundle,
+		caPrivateKey: caPrivateKey,
+	}, nil
+}
+
+func (f *fakeSpiffePKI) genSVID(id spiffeid.ID) (*x509svid.SVID, error) {
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return nil, err
+	}
+
+	template := x509.Certificate{
+		SerialNumber: big.NewInt(200001),
+		URIs:         []*url.URL{id.URL()},
+		NotBefore:    time.Now(),
+		NotAfter:     time.Now().Add(time.Hour),
+		SubjectKeyId: []byte("svid"),
+		KeyUsage: x509.KeyUsageKeyEncipherment |
+			x509.KeyUsageKeyAgreement |
+			x509.KeyUsageDigitalSignature,
+		ExtKeyUsage: []x509.ExtKeyUsage{
+			x509.ExtKeyUsageServerAuth,
+			x509.ExtKeyUsageClientAuth,
+		},
+		BasicConstraintsValid: true,
+		PublicKey:             privateKey.PublicKey,
+	}
+
+	certDER, err := x509.CreateCertificate(
+		rand.Reader,
+		&template,
+		f.bundle.X509Authorities()[0],
+		privateKey.Public(),
+		f.caPrivateKey,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	keyPKCS8, err := x509.MarshalPKCS8PrivateKey(privateKey)
+	if err != nil {
+		return nil, err
+	}
+
+	return x509svid.ParseRaw(certDER, keyPKCS8)
+}
+
+// fakeSpiffeSource allows retrieving statically an SVID and its associated bundle.
+type fakeSpiffeSource struct {
+	bundle *x509bundle.Bundle
+	svid   *x509svid.SVID
+}
+
+func (s *fakeSpiffeSource) GetX509BundleForTrustDomain(trustDomain spiffeid.TrustDomain) (*x509bundle.Bundle, error) {
+	return s.bundle, nil
+}
+
+func (s *fakeSpiffeSource) GetX509SVID() (*x509svid.SVID, error) {
+	return s.svid, nil
 }

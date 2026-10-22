@@ -15,6 +15,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/labels"
 	ktypes "k8s.io/apimachinery/pkg/types"
 	kinformers "k8s.io/client-go/informers"
@@ -43,6 +44,7 @@ type clientWrapper struct {
 	isNamespaceAll    bool
 	watchedNamespaces []string
 
+	gatewayClass  string
 	labelSelector string
 }
 
@@ -141,8 +143,13 @@ func (c *clientWrapper) WatchAll(namespaces []string, stopCh <-chan struct{}) (<
 		opts.LabelSelector = "owner!=helm"
 	}
 
-	labelSelectorOptions := func(options *metav1.ListOptions) {
-		options.LabelSelector = c.labelSelector
+	gatewayClassOptions := func(options *metav1.ListOptions) {
+		switch {
+		case c.labelSelector != "":
+			options.LabelSelector = c.labelSelector
+		case c.gatewayClass != "":
+			options.FieldSelector = fields.OneTermEqualSelector("metadata.name", c.gatewayClass).String()
+		}
 	}
 
 	c.factoryNamespace = kinformers.NewSharedInformerFactoryWithOptions(c.csKube, resyncPeriod, kinformers.WithTransform(k8s.StripManagedFields))
@@ -151,7 +158,7 @@ func (c *clientWrapper) WatchAll(namespaces []string, stopCh <-chan struct{}) (<
 		return nil, err
 	}
 
-	c.factoryGatewayClass = gateinformers.NewSharedInformerFactoryWithOptions(c.csGateway, resyncPeriod, gateinformers.WithTweakListOptions(labelSelectorOptions), gateinformers.WithTransform(k8s.StripManagedFields))
+	c.factoryGatewayClass = gateinformers.NewSharedInformerFactoryWithOptions(c.csGateway, resyncPeriod, gateinformers.WithTweakListOptions(gatewayClassOptions), gateinformers.WithTransform(k8s.StripManagedFields))
 	_, err = c.factoryGatewayClass.Gateway().V1().GatewayClasses().Informer().AddEventHandler(eventHandler)
 	if err != nil {
 		return nil, err
@@ -199,6 +206,11 @@ func (c *clientWrapper) WatchAll(namespaces []string, stopCh <-chan struct{}) (<
 		}
 
 		_, err = factoryGateway.Gateway().V1().TLSRoutes().Informer().AddEventHandler(eventHandler)
+		if err != nil {
+			return nil, err
+		}
+
+		_, err = factoryGateway.Gateway().V1().ListenerSets().Informer().AddEventHandler(eventHandler)
 		if err != nil {
 			return nil, err
 		}
@@ -364,6 +376,21 @@ func (c *clientWrapper) ListGateways() []*gatev1.Gateway {
 	return result
 }
 
+func (c *clientWrapper) ListListenerSets() []*gatev1.ListenerSet {
+	var result []*gatev1.ListenerSet
+
+	for ns, factory := range c.factoriesGateway {
+		listenerSets, err := factory.Gateway().V1().ListenerSets().Lister().ListenerSets(ns).List(labels.Everything())
+		if err != nil {
+			log.Error().Err(err).Msgf("Failed to list ListenerSets in namespace %s", ns)
+			continue
+		}
+		result = append(result, listenerSets...)
+	}
+
+	return result
+}
+
 func (c *clientWrapper) ListGatewayClasses() ([]*gatev1.GatewayClass, error) {
 	return c.factoryGatewayClass.Gateway().V1().GatewayClasses().Lister().List(labels.Everything())
 }
@@ -519,9 +546,7 @@ func (c *clientWrapper) UpdateHTTPRouteStatus(ctx context.Context, route ktypes.
 
 		currentRoute = currentRoute.DeepCopy()
 		currentRoute.Status = gatev1.HTTPRouteStatus{
-			RouteStatus: gatev1.RouteStatus{
-				Parents: parentStatuses,
-			},
+			Parents: parentStatuses,
 		}
 
 		if _, err = c.csGateway.GatewayV1().HTTPRoutes(route.Namespace).UpdateStatus(ctx, currentRoute, metav1.UpdateOptions{}); err != nil {
@@ -561,9 +586,7 @@ func (c *clientWrapper) UpdateGRPCRouteStatus(ctx context.Context, route ktypes.
 
 		currentRoute = currentRoute.DeepCopy()
 		currentRoute.Status = gatev1.GRPCRouteStatus{
-			RouteStatus: gatev1.RouteStatus{
-				Parents: parentStatuses,
-			},
+			Parents: parentStatuses,
 		}
 
 		if _, err = c.csGateway.GatewayV1().GRPCRoutes(route.Namespace).UpdateStatus(ctx, currentRoute, metav1.UpdateOptions{}); err != nil {
@@ -603,9 +626,7 @@ func (c *clientWrapper) UpdateTCPRouteStatus(ctx context.Context, route ktypes.N
 
 		currentRoute = currentRoute.DeepCopy()
 		currentRoute.Status = gatev1.TCPRouteStatus{
-			RouteStatus: gatev1.RouteStatus{
-				Parents: parentStatuses,
-			},
+			Parents: parentStatuses,
 		}
 
 		if _, err = c.csGateway.GatewayV1().TCPRoutes(route.Namespace).UpdateStatus(ctx, currentRoute, metav1.UpdateOptions{}); err != nil {
@@ -645,9 +666,7 @@ func (c *clientWrapper) UpdateTLSRouteStatus(ctx context.Context, route ktypes.N
 
 		currentRoute = currentRoute.DeepCopy()
 		currentRoute.Status = gatev1.TLSRouteStatus{
-			RouteStatus: gatev1.RouteStatus{
-				Parents: parentStatuses,
-			},
+			Parents: parentStatuses,
 		}
 
 		if _, err = c.csGateway.GatewayV1().TLSRoutes(route.Namespace).UpdateStatus(ctx, currentRoute, metav1.UpdateOptions{}); err != nil {
@@ -718,6 +737,39 @@ func (c *clientWrapper) UpdateBackendTLSPolicyStatus(ctx context.Context, policy
 	return nil
 }
 
+func (c *clientWrapper) UpdateListenerSetStatus(ctx context.Context, listenerSet ktypes.NamespacedName, status gatev1.ListenerSetStatus) error {
+	if !c.isWatchedNamespace(listenerSet.Namespace) {
+		return fmt.Errorf("cannot update ListenerSet status %s/%s: namespace is not within watched namespaces", listenerSet.Namespace, listenerSet.Name)
+	}
+
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		currentListenerSet, err := c.factoriesGateway[c.lookupNamespace(listenerSet.Namespace)].Gateway().V1().ListenerSets().Lister().ListenerSets(listenerSet.Namespace).Get(listenerSet.Name)
+		if err != nil {
+			// We have to return err itself here (not wrapped inside another error) so that RetryOnConflict can identify it correctly.
+			return err
+		}
+
+		if listenerSetStatusEqual(currentListenerSet.Status, status) {
+			return nil
+		}
+
+		currentListenerSet = currentListenerSet.DeepCopy()
+		currentListenerSet.Status = status
+
+		if _, err = c.csGateway.GatewayV1().ListenerSets(listenerSet.Namespace).UpdateStatus(ctx, currentListenerSet, metav1.UpdateOptions{}); err != nil {
+			// We have to return err itself here (not wrapped inside another error) so that RetryOnConflict can identify it correctly.
+			return err
+		}
+
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("failed to update ListenerSet %s/%s status: %w", listenerSet.Namespace, listenerSet.Name, err)
+	}
+
+	return nil
+}
+
 // lookupNamespace returns the lookup namespace listenerKey for the given namespace.
 // When listening on all namespaces, it returns the client-go identifier ("")
 // for all-namespaces. Otherwise, it returns the given namespace.
@@ -756,13 +808,14 @@ func mergeRouteParentStatuses(routeNamespace string, currentParents, desiredPare
 		// TODO: Implement a mechanism to clean up old parentStatus for gateways that no instance manages.
 		// Also, keep statuses from gateways managed by other Traefik instances.
 		// We consider a status managed by the current instance when the parentRef targets one of the managed gateways.
+		// A ListenerSet parentRef is managed when one of the managed gateways loads the listeners of that ListenerSet.
 		// SectionName or Port is not used.
-		parentNamespace := string(ptr.Deref(currentParent.ParentRef.Namespace, gatev1.Namespace(routeNamespace)))
-		isManaged := slices.ContainsFunc(gateways, func(gw gatewayWithListeners) bool {
-			return gw.Namespace == parentNamespace && gw.Name == string(currentParent.ParentRef.Name)
-		})
-
-		if !isManaged {
+		owner := listenerOwner{
+			Kind:      string(ptr.Deref(currentParent.ParentRef.Kind, kindGateway)),
+			Namespace: string(ptr.Deref(currentParent.ParentRef.Namespace, gatev1.Namespace(routeNamespace))),
+			Name:      string(currentParent.ParentRef.Name),
+		}
+		if gatewayForOwner(gateways, owner) == nil {
 			parentStatuses = append(parentStatuses, currentParent)
 		}
 	}
@@ -772,6 +825,7 @@ func mergeRouteParentStatuses(routeNamespace string, currentParents, desiredPare
 
 func gatewayStatusEqual(statusA, statusB gatev1.GatewayStatus) bool {
 	return reflect.DeepEqual(statusA.Addresses, statusB.Addresses) &&
+		reflect.DeepEqual(statusA.AttachedListenerSets, statusB.AttachedListenerSets) &&
 		listenersStatusEqual(statusA.Listeners, statusB.Listeners) &&
 		conditionsEqual(statusA.Conditions, statusB.Conditions)
 }
@@ -851,5 +905,18 @@ func conditionsEqual(conditionsA, conditionsB []metav1.Condition) bool {
 			cA.Status == cB.Status &&
 			cA.Message == cB.Message &&
 			cA.ObservedGeneration == cB.ObservedGeneration
+	})
+}
+
+func listenerSetStatusEqual(statusA, statusB gatev1.ListenerSetStatus) bool {
+	return listenerEntryStatusesEqual(statusA.Listeners, statusB.Listeners) &&
+		conditionsEqual(statusA.Conditions, statusB.Conditions)
+}
+
+func listenerEntryStatusesEqual(listenersA, listenersB []gatev1.ListenerEntryStatus) bool {
+	return slices.EqualFunc(listenersA, listenersB, func(lA gatev1.ListenerEntryStatus, lB gatev1.ListenerEntryStatus) bool {
+		return lA.Name == lB.Name &&
+			lA.AttachedRoutes == lB.AttachedRoutes &&
+			conditionsEqual(lA.Conditions, lB.Conditions)
 	})
 }
